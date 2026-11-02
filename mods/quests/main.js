@@ -53,7 +53,7 @@ function labelFor(cwd) {
 export default class Quests extends View {
   init(_props, cx) {
     this.quests = [];     // newest first, each with its file
-    this.onlyMine = false; // filter to the focused agent's folder
+    this.onlyMine = true;  // follow the agent in front; 'all folders' is one click away
     this.list(cx);
     cx.timer.every(TICK, (cx) => this.list(cx));
   }
@@ -140,9 +140,9 @@ export default class Quests extends View {
   render(cx) {
     const t = theme();
     const inPane = !props()?.overlay;
-    const mine = base(this.agentCwd());
+    const mine = norm(this.agentCwd());
     let list = this.quests;
-    if (this.onlyMine && mine) list = list.filter((q) => base(q.cwd) === mine);
+    if (this.onlyMine && mine) list = list.filter((q) => norm(q.cwd) === mine);
     const shown = list.slice(0, SHOW);
     const open = shown.reduce((n, q) => n + (q.verify ?? []).filter((_, i) => !(q.checked ?? {})["verify:" + i]).length, 0);
 
@@ -218,6 +218,7 @@ export default class Quests extends View {
       else groups.push({ key, cwd: q.cwd, items: [q] });
     }
 
+    const emptyHere = !shown.length && this.onlyMine && Boolean(mine);
     const body = shown.length
       ? v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(
         groups.map((g) => v_flex().gap(1)
@@ -225,8 +226,16 @@ export default class Quests extends View {
             .child(div().text_size(10.5).text_color(t.muted).child(labelFor(g.cwd)))
             .child(div().text_size(10).text_color(t.dim).child(String(g.items.length))))
           .children(g.items.map(quest))))
-      : v_flex().p(12).child(div().text_size(11.5).text_color(t.dim)
-        .child("No quests yet. They appear when a turn ends in an omp session that has the quests extension."));
+      : v_flex().p(12).gap(8)
+        .child(div().text_size(11.5).text_color(t.dim)
+          .child(emptyHere
+            ? "No quests for " + base(this.agentCwd()) + " yet."
+            : "No quests yet. They appear when a turn ends in an omp session that has the quests extension."))
+        .when(emptyHere && this.quests.length > 0, (el) => el.child(h_flex().child(h_flex().id("q-showall").h(22).px(8).flex_none().items_center()
+          .rounded(6).border_1().border_color(t.border).bg(t.chrome).text_size(11).text_color(t.dim)
+          .hover((x) => x.bg(t.hover).text_color(t.foreground))
+          .on_click((_e, cx) => { this.onlyMine = false; cx.notify(); })
+          .child("Show all folders (" + this.quests.length + ")"))));
 
     return v_flex().id("quests").size_full().min_w(0).bg(t.surface).text_color(t.foreground).child(head)
       .child(v_flex().flex_1().min_h(0).min_w(0).child(body))
