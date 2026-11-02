@@ -2,7 +2,7 @@
 // person can confirm. The omp "quests" extension writes these files; ticking a box writes back.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, appHome, focused, notify, openOverlay, panes, props, run, theme } from "herdr";
+import { agents, appHome, exec, focused, notify, openOverlay, panes, props, run, spaces, theme } from "herdr";
 import * as fs from "fs/promises";
 
 const DIR = () => appHome() + "\\cache\\quests";
@@ -17,6 +17,27 @@ const stamp = (iso) => {
   const day = p(d.getMonth() + 1) + "-" + p(d.getDate());
   return d.toDateString() === new Date().toDateString() ? hm : day + " " + hm;
 };
+
+// base64 without btoa/TextEncoder: the sandbox has neither.
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function b64encode(text) {
+  const bytes = [];
+  for (const ch of String(text)) {
+    const c = ch.codePointAt(0);
+    if (c < 0x80) bytes.push(c);
+    else if (c < 0x800) bytes.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else bytes.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
+    out += B64[(n >> 18) & 63] + B64[(n >> 12) & 63]
+      + (i + 1 < bytes.length ? B64[(n >> 6) & 63] : "=")
+      + (i + 2 < bytes.length ? B64[n & 63] : "=");
+  }
+  return out;
+}
 
 const base = (p) => String(p ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
 const norm = (p) => String(p ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -38,30 +59,52 @@ export default class Quests extends View {
   }
 
   async list(cx) {
-    try {
-      const names = (await fs.readdir(DIR())).filter((n) => n.endsWith(".json"));
-      const out = [];
+    const machines = [null, ...new Set(spaces().map((s) => s.machine).filter(Boolean))];
+    const out = [];
+    for (const machine of machines) {
+      let names = [];
+      let read = null;
+      if (!machine) {
+        try { names = (await fs.readdir(DIR())).filter((n) => n.endsWith(".json")); } catch { names = []; }
+        read = async (name) => fs.readFile(DIR() + "\\" + name, "utf8");
+      } else {
+        const home = this.homes = this.homes ?? {};
+        if (!home[machine]) {
+          const r = await exec("sh", ["-c", 'printf %s "$HOME"'], { on: machine }).catch(() => null);
+          home[machine] = String(r?.stdout ?? "").trim();
+        }
+        const path = home[machine] + "/.config/herdr-app/cache/quests";
+        const r = await exec("sh", ["-c", 'ls -1 "$1" 2>/dev/null', "sh", path], { on: machine }).catch(() => null);
+        names = String(r?.stdout ?? "").split(/\r?\n/).filter((n) => n.endsWith(".json"));
+        read = async (name) => (await exec("sh", ["-c", 'cat "$1"', "sh", path + "/" + name], { on: machine }).catch(() => null))?.stdout ?? null;
+      }
       for (const name of names.slice(-40)) {
         try {
-          const text = await fs.readFile(DIR() + "\\" + name, "utf8");
+          const text = await read(name);
           const q = JSON.parse(text);
-          if (q && typeof q === "object") out.push({ ...q, file: name });
+          if (q && typeof q === "object") out.push({ ...q, file: name, machine });
         } catch { /* a half-written file waits for the next pass */ }
       }
-      out.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
-      this.quests = out;
-    } catch { this.quests = []; }
+    }
+    out.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
+    this.quests = out;
     cx.notify();
   }
 
   // A tick is written into the quest file itself, so the record travels with the quest.
   async toggle(q, key, cx) {
-    const file = DIR() + "\\" + q.file;
     const checked = { ...(q.checked ?? {}) };
     if (checked[key]) delete checked[key];
     else checked[key] = new Date().toISOString();
     q.checked = checked;
-    try { await fs.writeFile(file, JSON.stringify({ ...q, file: undefined }, null, 1)); } catch { /* the box still moves */ }
+    const body = JSON.stringify({ ...q, file: undefined, machine: undefined }, null, 1);
+    try {
+      if (!q.machine) await fs.writeFile(DIR() + "\\" + q.file, body);
+      else {
+        const path = (this.homes?.[q.machine] ?? "") + "/.config/herdr-app/cache/quests/" + q.file;
+        await exec("sh", ["-c", 'printf %s "$1" | base64 -d > "$2"', "sh", b64encode(body), path], { on: q.machine });
+      }
+    } catch { /* the box still moves */ }
     cx.notify();
   }
 
