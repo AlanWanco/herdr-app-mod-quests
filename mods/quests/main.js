@@ -2,7 +2,7 @@
 // person can confirm. The omp "quests" extension writes these files; ticking a box writes back.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, appHome, focused, openOverlay, panes, props, theme } from "herdr";
+import { agents, appHome, focused, notify, openOverlay, panes, props, run, theme } from "herdr";
 import * as fs from "fs/promises";
 
 const DIR = () => appHome() + "\\cache\\quests";
@@ -63,6 +63,35 @@ export default class Quests extends View {
     q.checked = checked;
     try { await fs.writeFile(file, JSON.stringify({ ...q, file: undefined }, null, 1)); } catch { /* the box still moves */ }
     cx.notify();
+  }
+
+  // What the person confirmed, written the way they would say it, handed to the agent's prompt.
+  feedback(q) {
+    const lines = ["Quest — " + String(q.ask ?? "").trim(),
+      stamp(q.at) + " · " + (base(q.cwd) || String(q.session ?? ""))];
+    const verify = q.verify ?? [];
+    if (verify.length) {
+      lines.push("", "Checked by hand:");
+      verify.forEach((v, i) => lines.push((q.checked?.["verify:" + i] ? "[x] " : "[ ] ") + String(v.what ?? "") + (v.how ? " — " + v.how : "")));
+    }
+    const done = q.done ?? [];
+    const unproven = done.filter((d) => !d.machine);
+    if (unproven.length) {
+      lines.push("", "Not proven by a machine:");
+      for (const d of unproven) lines.push("- " + String(d.what ?? ""));
+    }
+    const calls = (q.open ?? []).filter((o) => o.needsDecision);
+    if (calls.length) {
+      lines.push("", "Needs my call:");
+      for (const o of calls) lines.push("- " + String(o.what ?? "") + (o.why ? " (" + String(o.why) + ")" : ""));
+    }
+    return lines.join("\n");
+  }
+
+  sendToAgent(q, cx) {
+    cx.write_to_clipboard(this.feedback(q));
+    run("terminal.paste");
+    notify({ title: "Quest ready", body: "Pasted into the agent — press Enter to send it." });
   }
 
   render(cx) {
@@ -129,7 +158,13 @@ export default class Quests extends View {
         .when(Boolean(q.ask), (el) => el.child(div().text_size(12).text_color(t.foreground).child(String(q.ask))))
         .when(verify.length > 0, (el) => el.child(section("check by hand", verify)))
         .when(finished.length > 0, (el) => el.child(section("done", finished)))
-        .when(openItems.length > 0, (el) => el.child(section("not finished", openItems)));
+        .when(openItems.length > 0, (el) => el.child(section("not finished", openItems)))
+        .child(h_flex().pt(6).gap(6)
+          .child(h_flex().id("q-send-" + q.file).h(22).px(8).flex_none().items_center().rounded(6)
+            .border_1().border_color(t.border).bg(t.chrome).text_size(11).text_color(t.accent)
+            .hover((x) => x.bg(t.hover).text_color(t.foreground))
+            .on_click((_e, cx) => this.sendToAgent(q, cx))
+            .child("Feedback to agent")));
     };
 
     const groups = [];
