@@ -52,6 +52,9 @@ By hand:
 - `checked` belongs to the board, not the extension: ticking a row writes `verify:<n>` there, so the
   state travels with the file.
 
+The recap text is written in Simplified Chinese; the JSON keys stay English. Change the last line of
+`PROMPT` in the extension to record another language.
+
 ## Cost and noise
 
 The extension runs at most once per five minutes per session and only when new user messages arrived

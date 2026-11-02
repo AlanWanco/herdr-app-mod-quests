@@ -9,21 +9,21 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const PROMPT = `You are a project recorder. Read this conversation and answer with one JSON object only — no prose, no code fence.
+const PROMPT = `你是一个项目记录员。看完这段对话后，只输出一个 JSON 对象，不要任何解释、不要代码围栏。
 
 {
-  "ask": "what the user asked for in this turn, one or two sentences",
-  "done": [{ "what": "what got finished", "proof": "the command, test, file or read-back that proves it", "machine": true }],
-  "open": [{ "what": "what did not get finished", "why": "why", "needsDecision": false }],
-  "verify": [{ "what": "what only a person can confirm", "how": "how to confirm it" }]
+  "ask": "这一轮用户要求什么，一两句",
+  "done": [{ "what": "做完的事", "proof": "能证明它完成的证据：命令输出、测试结果、读回的文件", "machine": true }],
+  "open": [{ "what": "没做完的事", "why": "为什么没做完", "needsDecision": false }],
+  "verify": [{ "what": "需要人亲自确认的点", "how": "怎么确认" }]
 }
 
-Rules:
-- At most 6 items each, only what actually happened in this turn; empty arrays are fine.
-- machine: true only when a command output, a test result or file content proved it; anything that merely "should work" is false.
-- verify is for what a machine cannot replace: UI a person must look at, choices a person must make, actions on external services.
-- needsDecision: true for things that need the user's call before work continues.
-- Write in English, short sentences.`;
+规则：
+- 每项最多 6 条，只写这一轮真正发生的；没有就给空数组。
+- machine 只在命令输出、测试结果或文件内容确实证明过时才为 true；只是"应该没问题"的一律 false。
+- verify 写给机器替代不了的：需要人眼看的界面、需要人做的选择、外部服务上的操作。
+- needsDecision 为 true 表示需要用户拍板才能继续。
+- 所有文字用简体中文，短句。`;
 
 const stamp = () => {
   const d = new Date();
