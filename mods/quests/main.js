@@ -132,13 +132,13 @@ export default class Quests extends View {
     }
     const verify = q.verify ?? [];
     if (verify.length) {
-      lines.push("", "Checked by hand:");
+      lines.push("", "You confirmed:");
       verify.forEach((v, i) => lines.push((q.checked?.["verify:" + i] ? "[x] " : "[ ] ") + String(v.what ?? "") + (v.how ? " — " + v.how : "")));
     }
     const openItems = q.open ?? [];
     const notDone = openItems.filter((o) => !o.needsDecision);
     if (notDone.length) {
-      lines.push("", "Not finished:");
+      lines.push("", "Left undone:");
       for (const o of notDone) lines.push("- " + String(o.what ?? "") + (o.why ? " (" + String(o.why) + ")" : ""));
     }
     const calls = openItems.filter((o) => o.needsDecision);
@@ -166,7 +166,7 @@ export default class Quests extends View {
 
     const head = h_flex().h(34).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border).bg(t.chrome)
       .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().child("Quests"))
-      .when(open > 0, (el) => el.child(div().text_size(10.5).text_color(t.blocked).child(String(open) + " to check")))
+      .when(open > 0, (el) => el.child(div().text_size(10.5).text_color(t.blocked).child(String(open) + " to confirm")))
       .child(h_flex().id("q-filter").h(22).px(7).flex_none().items_center().rounded(6).text_size(11)
         .bg(this.onlyMine ? t.selected : t.chrome).text_color(this.onlyMine ? t.foreground : t.dim)
         .border_1().border_color(t.border).hover((x) => x.bg(t.hover))
@@ -197,19 +197,24 @@ export default class Quests extends View {
         .child(box(q, "verify:" + i, i))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(11.5).text_color(t.foreground).child(String(v.what ?? "")))
-          .when(Boolean(v.how), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(v.how))))));
+          .when(Boolean(v.how), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(v.how))))
+          .when(Boolean((q.checked ?? {})["verify:" + i]), (el) => el.child(div().text_size(10).text_color(t.done).child("you confirmed this")))));
       const finished = (q.done ?? []).map((d) => h_flex().gap(7).items_start()
         .child(div().h(16).w(16).flex_none().items_center().justify_center()
           .child(div().text_size(10).text_color(d.machine ? t.done : t.dim).child(d.machine ? "✓" : "·")))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(11.5).text_color(d.machine ? t.muted : t.foreground).child(String(d.what ?? "")))
           .when(Boolean(d.proof), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(d.proof))))));
-      const openItems = (q.open ?? []).map((o) => h_flex().gap(7).items_start()
-        .child(div().h(16).w(16).flex_none().items_center().justify_center().child(div().text_size(10).text_color(o.needsDecision ? t.blocked : t.dim).child(o.needsDecision ? "?" : "·")))
+      // Two kinds of open item: one wants a decision, the other is just not done yet.
+      const openRow = (o) => h_flex().gap(7).items_start()
+        .child(div().h(16).w(16).flex_none().items_center().justify_center()
+          .child(div().text_size(10).text_color(o.needsDecision ? t.blocked : t.dim).child(o.needsDecision ? "?" : "·")))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(11.5).text_color(t.foreground).child(String(o.what ?? "")))
           .when(Boolean(o.why), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(o.why))))
-          .when(Boolean(o.needsDecision), (el) => el.child(div().text_size(10).text_color(t.blocked).child("needs your call")))));
+          .when(Boolean(o.needsDecision), (el) => el.child(div().text_size(10).text_color(t.blocked).child("waiting on you"))));
+      const calls = (q.open ?? []).filter((o) => o.needsDecision).map(openRow);
+      const pending = (q.open ?? []).filter((o) => !o.needsDecision).map(openRow);
 
       return v_flex().id("q-" + q.file).gap(4).px(10).py(8).border_b(1).border_color(t.border)
         .child(h_flex().gap(6).items_center()
@@ -217,9 +222,10 @@ export default class Quests extends View {
           .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(base(q.cwd) || q.session || ""))
           .child(div().text_size(10).text_color(t.dim).child(String(q.session ?? "").slice(0, 8))))
         .when(Boolean(q.ask), (el) => el.child(div().text_size(12).text_color(t.foreground).child(String(q.ask))))
-        .when(verify.length > 0, (el) => el.child(section("check by hand", verify)))
+        .when(verify.length > 0, (el) => el.child(section("needs your confirmation", verify)))
         .when(finished.length > 0, (el) => el.child(section("done", finished)))
-        .when(openItems.length > 0, (el) => el.child(section("not finished", openItems)))
+        .when(calls.length > 0, (el) => el.child(section("needs your call", calls)))
+        .when(pending.length > 0, (el) => el.child(section("left undone", pending)))
         .child(h_flex().pt(6).gap(6)
           .child(h_flex().id("q-send-" + q.file).h(22).px(8).flex_none().items_center().rounded(6)
             .border_1().border_color(t.border).bg(t.chrome).text_size(11).text_color(t.accent)

@@ -21,7 +21,9 @@ const PROMPT = `你是一个项目记录员。看完这段对话后，只输出�
 规则：
 - 每项最多 6 条，只写这一轮真正发生的；没有就给空数组。
 - machine 只在命令输出、测试结果或文件内容确实证明过时才为 true；只是"应该没问题"的一律 false。
-- verify 写给机器替代不了的：需要人眼看的界面、需要人做的选择、外部服务上的操作。
+- verify 只写机器确认不了的：需要人眼看的界面、需要人做的选择、外部服务上的操作。
+  任何能用命令输出、测试结果或读文件确认的事，都必须放进 done（machine: true + proof），不许放进 verify。
+  反例："重启后新卡片是否为中文" —— 看一眼文件就能确认，属于 done，不属于 verify。
 - needsDecision 为 true 表示需要用户拍板才能继续。
 - 所有文字用简体中文，短句。`;
 
@@ -51,7 +53,7 @@ function parseJson(text) {
 
 export default function quests(pi) {
   if (String(process.env.OMP_QUESTS ?? "1") === "0") return;
-  const gapMs = Number(process.env.OMP_QUESTS_MIN_MS ?? 300000); // at most one recap per 5 minutes
+  const gapMs = Number(process.env.OMP_QUESTS_MIN_MS ?? 120000); // at most one recap per 2 minutes
   let lastAt = 0;
   let lastCount = -1;
 
