@@ -119,18 +119,29 @@ export default class Quests extends View {
   feedback(q) {
     const lines = ["Quest — " + String(q.ask ?? "").trim(),
       stamp(q.at) + " · " + (base(q.cwd) || String(q.session ?? ""))];
+    const done = q.done ?? [];
+    const proven = done.filter((d) => d.machine);
+    const unproven = done.filter((d) => !d.machine);
+    if (proven.length) {
+      lines.push("", "Done, proven by a machine:");
+      for (const d of proven) lines.push("- " + String(d.what ?? "") + (d.proof ? " (" + String(d.proof) + ")" : ""));
+    }
+    if (unproven.length) {
+      lines.push("", "Done, not proven:");
+      for (const d of unproven) lines.push("- " + String(d.what ?? ""));
+    }
     const verify = q.verify ?? [];
     if (verify.length) {
       lines.push("", "Checked by hand:");
       verify.forEach((v, i) => lines.push((q.checked?.["verify:" + i] ? "[x] " : "[ ] ") + String(v.what ?? "") + (v.how ? " — " + v.how : "")));
     }
-    const done = q.done ?? [];
-    const unproven = done.filter((d) => !d.machine);
-    if (unproven.length) {
-      lines.push("", "Not proven by a machine:");
-      for (const d of unproven) lines.push("- " + String(d.what ?? ""));
+    const openItems = q.open ?? [];
+    const notDone = openItems.filter((o) => !o.needsDecision);
+    if (notDone.length) {
+      lines.push("", "Not finished:");
+      for (const o of notDone) lines.push("- " + String(o.what ?? "") + (o.why ? " (" + String(o.why) + ")" : ""));
     }
-    const calls = (q.open ?? []).filter((o) => o.needsDecision);
+    const calls = openItems.filter((o) => o.needsDecision);
     if (calls.length) {
       lines.push("", "Needs my call:");
       for (const o of calls) lines.push("- " + String(o.what ?? "") + (o.why ? " (" + String(o.why) + ")" : ""));
