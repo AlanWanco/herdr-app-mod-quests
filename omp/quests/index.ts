@@ -25,6 +25,7 @@ const PROMPT = `你是一个项目记录员。看完这段对话后，只输出�
   任何能用命令输出、测试结果或读文件确认的事，都必须放进 done（machine: true + proof），不许放进 verify。
   反例："重启后新卡片是否为中文" —— 看一眼文件就能确认，属于 done，不属于 verify。
 - needsDecision 为 true 表示需要用户拍板才能继续。
+- ask 只写用户自己的要求，不要复述这段记录指令本身。
 - 所有文字用简体中文，短句。`;
 
 const stamp = () => {
@@ -38,6 +39,23 @@ function questDir() {
 }
 
 // The model is told not to fence its JSON; tolerate it anyway.
+// The turn's own user message, verbatim: the paraphrase below it is only a reading of this.
+function lastUserText(ctx) {
+  try {
+    const branch = ctx.sessionManager?.getBranch?.() ?? [];
+    for (let i = branch.length - 1; i >= 0; i--) {
+      const entry = branch[i];
+      if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+      const parts = Array.isArray(entry.message.content) ? entry.message.content : [];
+      const text = parts.filter((p) => p?.type === "text" && p.text).map((p) => p.text).join("\n").trim();
+      // Text typed into a terminal by hc arrives wrapped in <hc from="t3">…</hc>.
+      const clean = text.replace(/<hc\b[^>]*>([\s\S]*?)<\/hc>/g, "$1").trim();
+      if (clean) return clean.slice(0, 2000);
+    }
+  } catch { /* an unreadable branch just means no quote */ }
+  return "";
+}
+
 function parseJson(text) {
   const s = String(text ?? "").trim();
   const start = s.indexOf("{");
@@ -82,6 +100,7 @@ export default function quests(pi) {
         cwd: ctx.cwd ?? null,
         title: data.ask ?? null,
         at: new Date().toISOString(),
+        prompt: lastUserText(ctx),
         ask: String(data.ask ?? ""),
         done: Array.isArray(data.done) ? data.done.slice(0, 6) : [],
         open: Array.isArray(data.open) ? data.open.slice(0, 6) : [],

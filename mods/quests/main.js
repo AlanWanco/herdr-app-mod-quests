@@ -117,8 +117,9 @@ export default class Quests extends View {
 
   // What the person confirmed, written the way they would say it, handed to the agent's prompt.
   feedback(q) {
-    const lines = ["Quest — " + String(q.ask ?? "").trim(),
+    const lines = ["Quest — " + (String(q.prompt ?? "").trim() || String(q.ask ?? "").trim()),
       stamp(q.at) + " · " + (base(q.cwd) || String(q.session ?? ""))];
+    if (q.prompt && q.ask) lines.push("recap: " + String(q.ask));
     const done = q.done ?? [];
     const proven = done.filter((d) => d.machine);
     const unproven = done.filter((d) => !d.machine);
@@ -221,7 +222,11 @@ export default class Quests extends View {
           .child(div().text_size(10.5).text_color(t.dim).child(stamp(q.at)))
           .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(base(q.cwd) || q.session || ""))
           .child(div().text_size(10).text_color(t.dim).child(String(q.session ?? "").slice(0, 8))))
-        .when(Boolean(q.ask), (el) => el.child(div().text_size(12).text_color(t.foreground).child(String(q.ask))))
+        .when(Boolean(q.prompt), (el) => el.child(v_flex().gap(2)
+          .child(div().text_size(10).text_color(t.dim).child("you asked"))
+          .child(div().text_size(12).text_color(t.foreground)
+            .child(String(q.prompt).length > 320 ? String(q.prompt).slice(0, 320) + "…" : String(q.prompt)))))
+        .when(Boolean(q.ask), (el) => el.child(div().text_size(10.5).text_color(t.muted).child("recap · " + String(q.ask))))
         .when(verify.length > 0, (el) => el.child(section("needs your confirmation", verify)))
         .when(finished.length > 0, (el) => el.child(section("done", finished)))
         .when(calls.length > 0, (el) => el.child(section("needs your call", calls)))
