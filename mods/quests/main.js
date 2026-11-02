@@ -59,6 +59,7 @@ export default class Quests extends View {
   }
 
   async list(cx) {
+    if (this.writing) return; // a tick is on its way to disk; do not read over it
     const machines = [null, ...new Set(spaces().map((s) => s.machine).filter(Boolean))];
     const out = [];
     for (const machine of machines) {
@@ -91,12 +92,19 @@ export default class Quests extends View {
     cx.notify();
   }
 
-  // A tick is written into the quest file itself, so the record travels with the quest.
-  async toggle(q, key, cx) {
+  // A tick is written into the quest file itself, so the record travels with the quest. The box moves
+  // first: the write can take a second on another machine, and the poll must not read over it.
+  toggle(q, key, cx) {
     const checked = { ...(q.checked ?? {}) };
     if (checked[key]) delete checked[key];
     else checked[key] = new Date().toISOString();
     q.checked = checked;
+    cx.notify();
+    this.writing = (this.writing ?? 0) + 1;
+    this.persist(q).finally(() => { this.writing = Math.max(0, (this.writing ?? 1) - 1); });
+  }
+
+  async persist(q) {
     const body = JSON.stringify({ ...q, file: undefined, machine: undefined }, null, 1);
     try {
       if (!q.machine) await fs.writeFile(DIR() + "\\" + q.file, body);
@@ -105,7 +113,6 @@ export default class Quests extends View {
         await exec("sh", ["-c", 'printf %s "$1" | base64 -d > "$2"', "sh", b64encode(body), path], { on: q.machine });
       }
     } catch { /* the box still moves */ }
-    cx.notify();
   }
 
   // What the person confirmed, written the way they would say it, handed to the agent's prompt.
