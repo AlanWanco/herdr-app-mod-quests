@@ -1,0 +1,163 @@
+// Quests: what each finished turn asked for, what got done, what a machine proved, and what only a
+// person can confirm. The omp "quests" extension writes these files; ticking a box writes back.
+import { View, div, svg } from "gpui-kit";
+import { v_flex, h_flex } from "gpui-base";
+import { agents, appHome, focused, openOverlay, panes, props, theme } from "herdr";
+import * as fs from "fs/promises";
+
+const DIR = () => appHome() + "\\cache\\quests";
+const SHOW = 12;      // quests drawn at once
+const TICK = 4000;    // a cheap re-read: the extension writes these files
+
+const stamp = (iso) => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  const hm = p(d.getHours()) + ":" + p(d.getMinutes());
+  const day = p(d.getMonth() + 1) + "-" + p(d.getDate());
+  return d.toDateString() === new Date().toDateString() ? hm : day + " " + hm;
+};
+
+const base = (p) => String(p ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+const norm = (p) => String(p ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+// The folder a quest belongs to, named the way the agent list names that agent.
+function labelFor(cwd) {
+  const agent = agents().find((a) => norm(panes().find((p) => p.pane === a.pane)?.cwd) === norm(cwd));
+  if (!agent) return base(cwd) || String(cwd ?? "");
+  const tab = agent.tab_name && agent.tab_name !== String(agent.tab_index) ? " · " + agent.tab_name : "";
+  return (agent.space_name ?? agent.address) + tab;
+}
+
+export default class Quests extends View {
+  init(_props, cx) {
+    this.quests = [];     // newest first, each with its file
+    this.onlyMine = false; // filter to the focused agent's folder
+    this.list(cx);
+    cx.timer.every(TICK, (cx) => this.list(cx));
+  }
+
+  async list(cx) {
+    try {
+      const names = (await fs.readdir(DIR())).filter((n) => n.endsWith(".json"));
+      const out = [];
+      for (const name of names.slice(-40)) {
+        try {
+          const text = await fs.readFile(DIR() + "\\" + name, "utf8");
+          const q = JSON.parse(text);
+          if (q && typeof q === "object") out.push({ ...q, file: name });
+        } catch { /* a half-written file waits for the next pass */ }
+      }
+      out.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
+      this.quests = out;
+    } catch { this.quests = []; }
+    cx.notify();
+  }
+
+  // A tick is written into the quest file itself, so the record travels with the quest.
+  async toggle(q, key, cx) {
+    const file = DIR() + "\\" + q.file;
+    const checked = { ...(q.checked ?? {}) };
+    if (checked[key]) delete checked[key];
+    else checked[key] = new Date().toISOString();
+    q.checked = checked;
+    try { await fs.writeFile(file, JSON.stringify({ ...q, file: undefined }, null, 1)); } catch { /* the box still moves */ }
+    cx.notify();
+  }
+
+  render(cx) {
+    const t = theme();
+    const inPane = !props()?.overlay;
+    const mine = base(this.agentCwd());
+    let list = this.quests;
+    if (this.onlyMine && mine) list = list.filter((q) => base(q.cwd) === mine);
+    const shown = list.slice(0, SHOW);
+    const open = shown.reduce((n, q) => n + (q.verify ?? []).filter((_, i) => !(q.checked ?? {})["verify:" + i]).length, 0);
+
+    const head = h_flex().h(34).flex_none().px(10).gap(6).items_center().border_b(1).border_color(t.border).bg(t.chrome)
+      .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().child("Quests"))
+      .when(open > 0, (el) => el.child(div().text_size(10.5).text_color(t.blocked).child(String(open) + " to check")))
+      .child(h_flex().id("q-filter").h(22).px(7).flex_none().items_center().rounded(6).text_size(11)
+        .bg(this.onlyMine ? t.selected : t.chrome).text_color(this.onlyMine ? t.foreground : t.dim)
+        .border_1().border_color(t.border).hover((x) => x.bg(t.hover))
+        .on_click((_e, cx) => { this.onlyMine = !this.onlyMine; cx.notify(); })
+        .child(this.onlyMine ? "this folder" : "all folders"))
+      .child(h_flex().id("q-refresh").h(22).px(7).flex_none().items_center().rounded(6).text_size(11).text_color(t.dim)
+        .hover((x) => x.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => this.list(cx)).child("↻"))
+      .when(inPane, (el) => el.child(h_flex().id("q-open").h(22).px(7).flex_none().items_center().rounded(6)
+        .text_size(11).text_color(t.dim).border_1().border_color(t.border).hover((x) => x.bg(t.hover))
+        .on_click((_e, cx) => openOverlay({ mod: "quests", kind: "dialog", width: 620, height: 700 }))
+        .child("Open")));
+
+    const box = (q, key, i) => {
+      const on = Boolean((q.checked ?? {})[key]);
+      return h_flex().id("q-" + q.file + "-" + key).h(16).w(16).flex_none().items_center().justify_center().rounded(4)
+        .border_1().border_color(on ? t.done : t.input).bg(on ? t.done : t.chrome)
+        .cursor_pointer().on_click((_e, cx) => this.toggle(q, key, cx))
+        .when(on, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(11).text_color(t.solid_foreground)));
+    };
+
+    const section = (label, rows) => v_flex().gap(3)
+      .child(div().pt(6).text_size(10).text_color(t.dim).child(label))
+      .children(rows);
+
+    const quest = (q) => {
+      const verify = (q.verify ?? []).map((v, i) => h_flex().id("qv-" + q.file + "-" + i).gap(7).items_start()
+        .child(box(q, "verify:" + i, i))
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_size(11.5).text_color(t.foreground).child(String(v.what ?? "")))
+          .when(Boolean(v.how), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(v.how))))));
+      const finished = (q.done ?? []).map((d) => h_flex().gap(7).items_start()
+        .child(div().h(16).w(16).flex_none().items_center().justify_center()
+          .child(div().text_size(10).text_color(d.machine ? t.done : t.dim).child(d.machine ? "✓" : "·")))
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_size(11.5).text_color(d.machine ? t.muted : t.foreground).child(String(d.what ?? "")))
+          .when(Boolean(d.proof), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(d.proof))))));
+      const openItems = (q.open ?? []).map((o) => h_flex().gap(7).items_start()
+        .child(div().h(16).w(16).flex_none().items_center().justify_center().child(div().text_size(10).text_color(o.needsDecision ? t.blocked : t.dim).child(o.needsDecision ? "?" : "·")))
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_size(11.5).text_color(t.foreground).child(String(o.what ?? "")))
+          .when(Boolean(o.why), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(String(o.why))))
+          .when(Boolean(o.needsDecision), (el) => el.child(div().text_size(10).text_color(t.blocked).child("needs your call")))));
+
+      return v_flex().id("q-" + q.file).gap(4).px(10).py(8).border_b(1).border_color(t.border)
+        .child(h_flex().gap(6).items_center()
+          .child(div().text_size(10.5).text_color(t.dim).child(stamp(q.at)))
+          .child(div().flex_1().min_w(0).truncate().text_size(10.5).text_color(t.dim).child(base(q.cwd) || q.session || ""))
+          .child(div().text_size(10).text_color(t.dim).child(String(q.session ?? "").slice(0, 8))))
+        .when(Boolean(q.ask), (el) => el.child(div().text_size(12).text_color(t.foreground).child(String(q.ask))))
+        .when(verify.length > 0, (el) => el.child(section("check by hand", verify)))
+        .when(finished.length > 0, (el) => el.child(section("done", finished)))
+        .when(openItems.length > 0, (el) => el.child(section("not finished", openItems)));
+    };
+
+    const groups = [];
+    for (const q of shown) {
+      const key = norm(q.cwd);
+      const at = groups.find((g) => g.key === key);
+      if (at) at.items.push(q);
+      else groups.push({ key, cwd: q.cwd, items: [q] });
+    }
+
+    const body = shown.length
+      ? v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(
+        groups.map((g) => v_flex().gap(1)
+          .child(h_flex().flex_none().px(10).pt(10).pb(3).gap(6).items_center()
+            .child(div().text_size(10.5).text_color(t.muted).child(labelFor(g.cwd)))
+            .child(div().text_size(10).text_color(t.dim).child(String(g.items.length))))
+          .children(g.items.map(quest))))
+      : v_flex().p(12).child(div().text_size(11.5).text_color(t.dim)
+        .child("No quests yet. They appear when a turn ends in an omp session that has the quests extension."));
+
+    return v_flex().id("quests").size_full().min_w(0).bg(t.surface).text_color(t.foreground).child(head)
+      .child(v_flex().flex_1().min_h(0).min_w(0).child(body))
+      .when(inPane, (el) => el.child(h_flex().flex_none().px(10).py(5).border_t(1).border_color(t.border)
+        .child(div().max_w(300).truncate().text_size(10.5).text_color(t.dim).child("Files in " + DIR()))));
+  }
+
+  agentCwd() {
+    const agent = agents().find((a) => a.address === focused()?.agent);
+    return agent ? (panes().find((p) => p.pane === agent.pane)?.cwd ?? "") : "";
+  }
+}
