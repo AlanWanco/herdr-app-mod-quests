@@ -39,6 +39,32 @@ function b64encode(text) {
   return out;
 }
 
+// base64 -> UTF-8 without TextDecoder: herdr's exec decodes a remote stdout as the local codepage,
+// which turns Chinese into mojibake, so remote files travel as base64 instead.
+function b64decode(text) {
+  const clean = String(text).replace(/[^A-Za-z0-9+/=]/g, "");
+  const bytes = [];
+  for (let i = 0; i < clean.length; i += 4) {
+    const n = (B64.indexOf(clean[i]) << 18) | (B64.indexOf(clean[i + 1]) << 12)
+      | ((clean[i + 2] === "=" ? 0 : B64.indexOf(clean[i + 2])) << 6)
+      | (clean[i + 3] === "=" ? 0 : B64.indexOf(clean[i + 3]));
+    bytes.push((n >> 16) & 255);
+    if (clean[i + 2] !== "=") bytes.push((n >> 8) & 255);
+    if (clean[i + 3] !== "=") bytes.push(n & 255);
+  }
+  let out = "", i = 0;
+  while (i < bytes.length) {
+    const b = bytes[i++];
+    if (b < 0x80) { out += String.fromCharCode(b); continue; }
+    if (b < 0xe0) { out += String.fromCharCode(((b & 0x1f) << 6) | (bytes[i++] & 0x3f)); continue; }
+    if (b < 0xf0) { out += String.fromCharCode(((b & 0x0f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f)); continue; }
+    const cp = ((b & 0x07) << 18) | ((bytes[i++] & 0x3f) << 12) | ((bytes[i++] & 0x3f) << 6) | (bytes[i++] & 0x3f);
+    const v = cp - 0x10000;
+    out += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff));
+  }
+  return out;
+}
+
 const base = (p) => String(p ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
 const norm = (p) => String(p ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
@@ -59,7 +85,9 @@ export default class Quests extends View {
   }
 
   async list(cx) {
-    if (this.writing) return; // a tick is on its way to disk; do not read over it
+    // Skip a poll only while a tick is still on its way (a write that never returns must not
+    // freeze the board forever).
+    if (this.writingAt && Date.now() - this.writingAt < 4000) return;
     const machines = [null, ...new Set(spaces().map((s) => s.machine).filter(Boolean))];
     const out = [];
     for (const machine of machines) {
@@ -77,7 +105,10 @@ export default class Quests extends View {
         const path = home[machine] + "/.config/herdr-app/cache/quests";
         const r = await exec("sh", ["-c", 'ls -1 "$1" 2>/dev/null', "sh", path], { on: machine }).catch(() => null);
         names = String(r?.stdout ?? "").split(/\r?\n/).filter((n) => n.endsWith(".json"));
-        read = async (name) => (await exec("sh", ["-c", 'cat "$1"', "sh", path + "/" + name], { on: machine }).catch(() => null))?.stdout ?? null;
+        read = async (name) => {
+          const r = await exec("sh", ["-c", 'base64 < "$1"', "sh", path + "/" + name], { on: machine }).catch(() => null);
+          return r && r.code === 0 ? b64decode(r.stdout) : null;
+        };
       }
       for (const name of names.slice(-40)) {
         try {
@@ -100,8 +131,8 @@ export default class Quests extends View {
     else checked[key] = new Date().toISOString();
     q.checked = checked;
     cx.notify();
-    this.writing = (this.writing ?? 0) + 1;
-    this.persist(q).finally(() => { this.writing = Math.max(0, (this.writing ?? 1) - 1); });
+    this.writingAt = Date.now();
+    this.persist(q).finally(() => { this.writingAt = 0; });
   }
 
   async persist(q) {
